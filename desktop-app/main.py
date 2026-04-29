@@ -10,11 +10,13 @@ Each tab keeps its own state and worker thread; tabs do not share runtime data.
 
 from __future__ import annotations
 
+import json
+import os
 import sys
 import time
 from pathlib import Path
 
-from PyQt6.QtCore import QPoint, QRect, Qt, QThread, QTimer, pyqtSignal
+from PyQt6.QtCore import QPoint, QRect, QSettings, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont, QIcon, QIntValidator, QMouseEvent
 from PyQt6.QtWidgets import (
     QApplication,
@@ -330,6 +332,12 @@ def _fmt_thousands(n: int) -> str:
     return f"{n:,}".replace(",", " ")
 
 
+def resource_path(rel: str) -> str:
+    """Resolve a resource path that works both from source and from a PyInstaller bundle."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, rel)
+
+
 def make_field_row(label_text: str, default_value: str, hint: str | None = None,
                    numeric: bool = True) -> tuple[QWidget, QLineEdit]:
     """A label on the left, input on the right, on a rounded background row."""
@@ -422,15 +430,189 @@ class ClickerWorker(QThread):
 
 
 # ---------------------------------------------------------------------------
-# Shared clicker tab (Tab 1 - PagesAutoclick, Tab 2 - OpenChannels)
+# Channels worker — opens links in Chrome via DevTools Protocol (CDP)
+# Requires Chrome to be launched with --remote-debugging-port=9222
 # ---------------------------------------------------------------------------
 
 
-class ClickerTab(QWidget):
-    """Two-button tab: configure delay/count/gap, then START / CANCEL."""
+JS_FIND_MAX_RU_LINKS = r"""
+(() => {
+  const urls = [];
+  const ths = document.querySelectorAll('th');
+  for (const th of ths) {
+    if ((th.innerText || '').trim() !== 'Ссылка') continue;
+    const headerRow = th.parentElement;
+    const idx = Array.prototype.indexOf.call(headerRow.children, th);
+    if (idx < 0) continue;
+    const table = th.closest('table');
+    if (!table) continue;
+    const rows = table.querySelectorAll('tr');
+    for (const row of rows) {
+      if (row === headerRow) continue;
+      const cell = row.children[idx];
+      if (!cell) continue;
+      const anchors = cell.querySelectorAll('a[href^="https://max.ru/"]');
+      for (const a of anchors) {
+        if (!urls.includes(a.href)) urls.push(a.href);
+      }
+    }
+  }
+  return urls;
+})()
+"""
 
-    def __init__(self, default_delay: int, default_count: int, default_gap: int) -> None:
+
+class ChannelsWorker(QThread):
+    """Connects to a running Chrome on port 9222, finds max.ru/ links under
+    the «Ссылка» column on the second tab and opens them one by one."""
+
+    countdown = pyqtSignal(int)
+    progress = pyqtSignal(int, int)
+    finished_ok = pyqtSignal()
+    failed = pyqtSignal(str)
+
+    DEBUG_PORT = 9222
+
+    def __init__(self, delay_sec: int, count: int, gap_ms: int) -> None:
         super().__init__()
+        self.delay_sec = max(0, delay_sec)
+        self.count = max(0, count)
+        self.gap_ms = max(0, gap_ms)
+        self._stop = False
+
+    def stop(self) -> None:
+        self._stop = True
+
+    def _interruptible_sleep(self, total_ms: int) -> bool:
+        elapsed = 0
+        while elapsed < total_ms:
+            if self._stop:
+                return False
+            chunk = min(50, total_ms - elapsed)
+            time.sleep(chunk / 1000.0)
+            elapsed += chunk
+        return not self._stop
+
+    def run(self) -> None:
+        # Pre-start countdown
+        for s in range(self.delay_sec, 0, -1):
+            if self._stop:
+                return
+            self.countdown.emit(s)
+            if not self._interruptible_sleep(1000):
+                return
+
+        if self.count <= 0:
+            self.finished_ok.emit()
+            return
+
+        # Lazy imports so the module loads even if websocket-client is missing
+        try:
+            import urllib.request
+            from websocket import create_connection  # type: ignore
+        except Exception as exc:  # pragma: no cover - import guard
+            self.failed.emit(f"Не удалось загрузить websocket-client: {exc}")
+            return
+
+        # Discover tabs from Chrome's debug endpoint
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{self.DEBUG_PORT}/json", timeout=3
+            ) as r:
+                tabs_data = json.loads(r.read().decode("utf-8"))
+        except Exception:
+            self.failed.emit(
+                "Chrome не запущен с --remote-debugging-port=9222 (см. README)"
+            )
+            return
+
+        page_tabs = [t for t in tabs_data if t.get("type") == "page"]
+        if len(page_tabs) < 2:
+            self.failed.emit("В Chrome не найдена вторая вкладка")
+            return
+        target = page_tabs[1]
+        ws_url = target.get("webSocketDebuggerUrl")
+        if not ws_url:
+            self.failed.emit("Не удалось получить WebSocket URL вкладки")
+            return
+
+        try:
+            ws = create_connection(ws_url, timeout=5)
+        except Exception as exc:
+            self.failed.emit(f"Не удалось подключиться к вкладке: {exc}")
+            return
+
+        msg_counter = [0]
+
+        def cdp(method: str, params: dict | None = None) -> dict:
+            msg_counter[0] += 1
+            mid = msg_counter[0]
+            ws.send(json.dumps({"id": mid, "method": method, "params": params or {}}))
+            while True:
+                resp = json.loads(ws.recv())
+                if resp.get("id") == mid:
+                    return resp
+
+        try:
+            resp = cdp("Runtime.evaluate", {
+                "expression": JS_FIND_MAX_RU_LINKS,
+                "returnByValue": True,
+            })
+            urls = (
+                (resp.get("result") or {}).get("result", {}).get("value") or []
+            )
+            if not urls:
+                self.failed.emit(
+                    "На второй вкладке не найдено ссылок https://max.ru/ под колонкой «Ссылка»"
+                )
+                return
+
+            urls = urls[: self.count]
+            total = len(urls)
+            opened = 0
+            for url in urls:
+                if self._stop:
+                    break
+                escaped = url.replace("\\", "\\\\").replace("'", "\\'")
+                cdp("Runtime.evaluate", {
+                    "expression": f"window.open('{escaped}', '_blank')",
+                    "userGesture": True,
+                })
+                opened += 1
+                self.progress.emit(opened, total)
+                if opened < total and self.gap_ms > 0:
+                    if not self._interruptible_sleep(self.gap_ms):
+                        break
+        except Exception as exc:
+            self.failed.emit(f"Ошибка во время выполнения: {exc}")
+            return
+        finally:
+            try:
+                ws.close()
+            except Exception:
+                pass
+
+        if not self._stop:
+            self.finished_ok.emit()
+
+
+# ---------------------------------------------------------------------------
+# Shared runner tab (Tab 1 - PagesAutoclick, Tab 2 - OpenChannels)
+# ---------------------------------------------------------------------------
+
+
+class _RunnerTabBase(QWidget):
+    """Three numeric fields + START/CANCEL with countdown styling.
+    Subclasses provide field labels/defaults and a worker factory."""
+
+    def __init__(
+        self,
+        fields: list[tuple[str, str]],
+        worker_factory,
+    ) -> None:
+        super().__init__()
+        self._worker_factory = worker_factory
+
         outer = QVBoxLayout(self)
         outer.setContentsMargins(36, 32, 36, 32)
         outer.setSpacing(0)
@@ -441,9 +623,9 @@ class ClickerTab(QWidget):
         card_layout.setContentsMargins(48, 44, 48, 36)
         card_layout.setSpacing(22)
 
-        delay_row, self.delay_input = make_field_row("Задержка (сек)", str(default_delay))
-        count_row, self.count_input = make_field_row("Количество", str(default_count))
-        gap_row, self.gap_input = make_field_row("Задержка между кликами", str(default_gap))
+        delay_row, self.delay_input = make_field_row(fields[0][0], fields[0][1])
+        count_row, self.count_input = make_field_row(fields[1][0], fields[1][1])
+        gap_row, self.gap_input = make_field_row(fields[2][0], fields[2][1])
 
         card_layout.addWidget(delay_row)
         card_layout.addWidget(count_row)
@@ -470,7 +652,7 @@ class ClickerTab(QWidget):
         card_layout.addLayout(button_row)
         outer.addWidget(card)
 
-        self.worker: ClickerWorker | None = None
+        self.worker: QThread | None = None
 
     # ------------------------------------------------------------------ start/stop
     def _on_start(self) -> None:
@@ -489,7 +671,7 @@ class ClickerTab(QWidget):
         self.cancel_btn.setEnabled(True)
         self.start_btn.setEnabled(False)
 
-        self.worker = ClickerWorker(delay, count, gap)
+        self.worker = self._worker_factory(delay, count, gap)
         self.worker.countdown.connect(self._on_countdown)
         self.worker.progress.connect(self._on_progress)
         self.worker.finished_ok.connect(self._on_finished)
@@ -513,15 +695,12 @@ class ClickerTab(QWidget):
 
     def _on_failed(self, message: str) -> None:
         self.start_btn.setText("ERROR")
-        # remember the message for diagnostics
         self.start_btn.setToolTip(message)
 
     def _on_thread_done(self) -> None:
-        # thread cleanup (also fires on stop / failure)
         self.worker = None
         self.cancel_btn.setEnabled(False)
         self.start_btn.setEnabled(True)
-        # restore look after a brief delay so the user sees the final state
         QTimer.singleShot(1200, self._restore_idle)
 
     def _restore_idle(self) -> None:
@@ -537,14 +716,28 @@ class ClickerTab(QWidget):
         self.start_btn.style().polish(self.start_btn)
 
 
-class AutoclickTab(ClickerTab):
+class AutoclickTab(_RunnerTabBase):
     def __init__(self) -> None:
-        super().__init__(default_delay=5, default_count=700, default_gap=10)
+        super().__init__(
+            fields=[
+                ("Задержка (сек)", "5"),
+                ("Количество", "700"),
+                ("Задержка между кликами", "10"),
+            ],
+            worker_factory=lambda d, c, g: ClickerWorker(d, c, g),
+        )
 
 
-class OpenChannelsTab(ClickerTab):
+class OpenChannelsTab(_RunnerTabBase):
     def __init__(self) -> None:
-        super().__init__(default_delay=7, default_count=100, default_gap=50)
+        super().__init__(
+            fields=[
+                ("Задержка перед стартом (сек)", "5"),
+                ("Количество каналов", "50"),
+                ("Задержка между действиями (мс)", "500"),
+            ],
+            worker_factory=lambda d, c, g: ChannelsWorker(d, c, g),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -685,6 +878,38 @@ class ProgressTab(QWidget):
         self.add_button.clicked.connect(self._on_add)
         self.add_input.returnPressed.connect(self._on_add)
 
+        # Restore persisted state (saved via QSettings between launches)
+        self._settings = QSettings()
+        self._load_state()
+
+    # ------------------------------------------------------------------
+    # persistence
+    # ------------------------------------------------------------------
+    def _load_state(self) -> None:
+        try:
+            credit = int(self._settings.value("progress/credit", 0))
+            computer = int(self._settings.value("progress/computer", 0))
+            apartment = int(self._settings.value("progress/apartment", 0))
+        except (TypeError, ValueError):
+            credit = computer = apartment = 0
+        history_raw = self._settings.value("progress/history", "[]")
+        try:
+            parsed = json.loads(history_raw if isinstance(history_raw, str) else "[]")
+            self.history = [(str(k), int(v)) for k, v in parsed if k in self.bars]
+        except Exception:
+            self.history = []
+        self.credit_bar.set_value(credit)
+        self.computer_bar.set_value(computer)
+        self.apartment_bar.set_value(apartment)
+        self._refresh_total()
+
+    def _save_state(self) -> None:
+        self._settings.setValue("progress/credit", self.credit_bar.value)
+        self._settings.setValue("progress/computer", self.computer_bar.value)
+        self._settings.setValue("progress/apartment", self.apartment_bar.value)
+        self._settings.setValue("progress/history", json.dumps(self.history))
+        self._settings.sync()
+
     # ------------------------------------------------------------------
     # builders
     # ------------------------------------------------------------------
@@ -731,6 +956,7 @@ class ProgressTab(QWidget):
         bar.set_value(bar.value + amount)
         self.history.append((self.selected, amount))
         self._refresh_total()
+        self._save_state()
         self.add_input.clear()
 
     def _on_undo(self) -> None:
@@ -740,6 +966,7 @@ class ProgressTab(QWidget):
         bar = self.bars[key]
         bar.set_value(bar.value - amount)
         self._refresh_total()
+        self._save_state()
 
     def _refresh_total(self) -> None:
         total = self.credit_bar.value + self.computer_bar.value + self.apartment_bar.value
@@ -876,7 +1103,7 @@ class MainWindow(QMainWindow):
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
         self.setMouseTracking(True)
-        self.setWindowTitle("Tri-Tab Utility")
+        self.setWindowTitle("FLYWERK AUTOMATION")
         self.setMinimumSize(960, 620)
         self.resize(1080, 720)
 
@@ -1005,10 +1232,36 @@ class MainWindow(QMainWindow):
         self.setGeometry(g)
 
 
+def _set_windows_app_id() -> None:
+    """Tell Windows this is a distinct app so the taskbar shows our title/icon."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "Flywerk.Automation"
+        )
+    except Exception:
+        pass
+
+
 def main() -> int:
+    _set_windows_app_id()
+
+    # Organisation/application identity — required so QSettings has a stable location
+    QApplication.setOrganizationName("Flywerk")
+    QApplication.setApplicationName("FlywerkAutomation")
+    QApplication.setApplicationDisplayName("Flywerk Automation")
+
     app = QApplication(sys.argv)
     app.setStyleSheet(QSS)
     app.setFont(QFont("Helvetica", 10))
+
+    icon_path = resource_path("app.ico")
+    if os.path.exists(icon_path):
+        app_icon = QIcon(icon_path)
+        app.setWindowIcon(app_icon)
+
     win = MainWindow()
     win.show()
     return app.exec()
