@@ -211,6 +211,16 @@ QPushButton#AddButton {{
 }}
 
 /* Cards */
+QFrame#FieldRow {{
+    background-color: #1f2a3a;
+    border: none;
+    border-radius: 18px;
+}}
+QFrame#FieldRow > QLabel {{
+    background: transparent;
+    border: none;
+}}
+
 QFrame#Card {{
     background-color: {BG_ELEVATED};
     border: 1px solid {BORDER};
@@ -315,27 +325,18 @@ QPushButton#PickerDot:checked {{
 
 def make_field_row(label_text: str, default_value: str, hint: str | None = None,
                    numeric: bool = True) -> tuple[QWidget, QLineEdit]:
-    """A label on the left, hint underneath, input on the right."""
-    row = QWidget()
+    """A label on the left, input on the right, on a rounded background row."""
+    row = QFrame()
+    row.setObjectName("FieldRow")
+    row.setFrameShape(QFrame.Shape.NoFrame)
     row.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
     h = QHBoxLayout(row)
-    h.setContentsMargins(36, 6, 4, 6)
+    h.setContentsMargins(28, 14, 16, 14)
     h.setSpacing(20)
-
-    label_box = QVBoxLayout()
-    label_box.setSpacing(0)
-    label_box.setContentsMargins(0, 0, 0, 0)
 
     label = QLabel(label_text)
     label.setObjectName("FieldLabel")
-    label_box.addWidget(label)
-
-    if hint:
-        hint_label = QLabel(hint)
-        hint_label.setObjectName("FieldHint")
-        label_box.addWidget(hint_label)
-
-    h.addLayout(label_box, 1)
+    h.addWidget(label, 1, Qt.AlignmentFlag.AlignVCenter)
 
     edit = QLineEdit(default_value)
     edit.setObjectName("NumericInput")
@@ -366,9 +367,7 @@ class AutoclickTab(QWidget):
 
         delay_row, self.delay_input = make_field_row("Задержка (сек)", "5")
         count_row, self.count_input = make_field_row("Количество", "700")
-        gap_row, self.gap_input = make_field_row(
-            "Задержка между кликами", "10", hint="дефолт 10ms"
-        )
+        gap_row, self.gap_input = make_field_row("Задержка между кликами", "10")
 
         card_layout.addWidget(delay_row)
         card_layout.addWidget(count_row)
@@ -413,9 +412,7 @@ class OpenChannelsTab(QWidget):
 
         delay_row, self.delay_input = make_field_row("Задержка (сек)", "7")
         count_row, self.count_input = make_field_row("Количество", "100")
-        gap_row, self.gap_input = make_field_row(
-            "Задержка между кликами", "50", hint="дефолт 50ms"
-        )
+        gap_row, self.gap_input = make_field_row("Задержка между кликами", "50")
 
         card_layout.addWidget(delay_row)
         card_layout.addWidget(count_row)
@@ -529,9 +526,9 @@ class ProgressTab(QWidget):
 
         left.addStretch(1)
 
-        # Right column: input area
+        # Right column: input area (equal spacing, mirrors left column rhythm)
         right = QVBoxLayout()
-        right.setSpacing(20)
+        right.setSpacing(14)
 
         right.addWidget(self._build_input_block("Добавить", "", numeric=True,
                                                 button_text="Добавить",
@@ -540,10 +537,9 @@ class ProgressTab(QWidget):
                                                 button_text=None,
                                                 attr_name="remaining_input",
                                                 readonly=True))
+        right.addWidget(self._build_total_block())
 
         right.addStretch(1)
-
-        right.addWidget(self._build_total_block())
 
         cancel_row = QHBoxLayout()
         cancel_row.addStretch(1)
@@ -583,7 +579,7 @@ class ProgressTab(QWidget):
         block.setObjectName("Card")
         block.setStyleSheet(f"QFrame#Card {{ background-color: #16202d; }}")
         v = QVBoxLayout(block)
-        v.setContentsMargins(22, 16, 22, 18)
+        v.setContentsMargins(20, 14, 20, 16)
         v.setSpacing(10)
 
         small = QLabel(label_text)
@@ -618,11 +614,10 @@ class ProgressTab(QWidget):
         block.setObjectName("Card")
         block.setStyleSheet(f"QFrame#Card {{ background-color: #16202d; }}")
         v = QVBoxLayout(block)
-        v.setContentsMargins(22, 16, 22, 20)
-        v.setSpacing(8)
+        v.setContentsMargins(20, 14, 20, 16)
+        v.setSpacing(10)
         small = QLabel("Цель")
         small.setObjectName("SmallLabel")
-        small.setAlignment(Qt.AlignmentFlag.AlignCenter)
         v.addWidget(small)
         amount = QLabel("1 800 000")
         amount.setObjectName("TotalAmount")
@@ -723,7 +718,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(0)
 
         # Title bar
-        self.title_bar = TitleBar(self, "TRI-TAB UTILITY")
+        self.title_bar = TitleBar(self, "FLYWERK AUTOMATION")
         layout.addWidget(self.title_bar)
 
         # Body container
