@@ -1,18 +1,20 @@
 """
-Tri-Tab Desktop App
+Flywerk Automation
 Three independent utilities in one window:
-  1. PagesAutoclick - configurable autoclicker
-  2. OpenChannels  - sequential channel opener (Chrome)
-  3. Progress      - 4 progress bars (credit / computer / apartment / total)
+  1. PagesAutoclick - configurable autoclicker (clicks at cursor position)
+  2. OpenChannels   - same engine, defaults tuned for opening channels in Chrome
+  3. Progress       - 4 progress bars (credit / computer / apartment / total)
 
-UI-only build for design approval. Logic is wired in a follow-up pass.
+Each tab keeps its own state and worker thread; tabs do not share runtime data.
 """
 
 from __future__ import annotations
 
 import sys
+import time
+from pathlib import Path
 
-from PyQt6.QtCore import QPoint, QRect, Qt
+from PyQt6.QtCore import QPoint, QRect, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont, QIcon, QIntValidator, QMouseEvent
 from PyQt6.QtWidgets import (
     QApplication,
@@ -323,6 +325,11 @@ QPushButton#PickerDot:checked {{
 # ---------------------------------------------------------------------------
 
 
+def _fmt_thousands(n: int) -> str:
+    """Format an integer with non-breaking spaces every three digits (e.g. 1 800 000)."""
+    return f"{n:,}".replace(",", " ")
+
+
 def make_field_row(label_text: str, default_value: str, hint: str | None = None,
                    numeric: bool = True) -> tuple[QWidget, QLineEdit]:
     """A label on the left, input on the right, on a rounded background row."""
@@ -348,12 +355,81 @@ def make_field_row(label_text: str, default_value: str, hint: str | None = None,
 
 
 # ---------------------------------------------------------------------------
-# Tab 1 - PagesAutoclick
+# Background worker — countdown + click loop
 # ---------------------------------------------------------------------------
 
 
-class AutoclickTab(QWidget):
-    def __init__(self) -> None:
+class ClickerWorker(QThread):
+    countdown = pyqtSignal(int)         # seconds left in pre-start delay
+    progress = pyqtSignal(int, int)     # (done, total) clicks
+    finished_ok = pyqtSignal()
+    failed = pyqtSignal(str)
+
+    def __init__(self, delay_sec: int, count: int, gap_ms: int) -> None:
+        super().__init__()
+        self.delay_sec = max(0, delay_sec)
+        self.count = max(0, count)
+        self.gap_ms = max(0, gap_ms)
+        self._stop = False
+
+    def stop(self) -> None:
+        self._stop = True
+
+    def _interruptible_sleep(self, total_ms: int) -> bool:
+        """Sleep in 50 ms slices so cancel feels instant. Returns False if cancelled."""
+        elapsed = 0
+        slice_ms = 50
+        while elapsed < total_ms:
+            if self._stop:
+                return False
+            chunk = min(slice_ms, total_ms - elapsed)
+            time.sleep(chunk / 1000.0)
+            elapsed += chunk
+        return not self._stop
+
+    def run(self) -> None:
+        try:
+            import pyautogui
+            pyautogui.FAILSAFE = True  # mouse to top-left corner aborts
+            pyautogui.PAUSE = 0
+        except Exception as exc:  # pragma: no cover - import guard
+            self.failed.emit(f"pyautogui import failed: {exc}")
+            return
+
+        # Pre-start countdown
+        for s in range(self.delay_sec, 0, -1):
+            if self._stop:
+                return
+            self.countdown.emit(s)
+            if not self._interruptible_sleep(1000):
+                return
+
+        # Click loop
+        for i in range(self.count):
+            if self._stop:
+                return
+            try:
+                pyautogui.click()
+            except Exception as exc:
+                self.failed.emit(str(exc))
+                return
+            self.progress.emit(i + 1, self.count)
+            if i < self.count - 1 and self.gap_ms > 0:
+                if not self._interruptible_sleep(self.gap_ms):
+                    return
+
+        self.finished_ok.emit()
+
+
+# ---------------------------------------------------------------------------
+# Shared clicker tab (Tab 1 - PagesAutoclick, Tab 2 - OpenChannels)
+# ---------------------------------------------------------------------------
+
+
+class ClickerTab(QWidget):
+    """Two-button tab: configure delay/count/gap, then START / CANCEL."""
+
+    def __init__(self, default_delay: int, default_count: int, default_gap: int) -> None:
         super().__init__()
         outer = QVBoxLayout(self)
         outer.setContentsMargins(36, 32, 36, 32)
@@ -365,14 +441,13 @@ class AutoclickTab(QWidget):
         card_layout.setContentsMargins(48, 44, 48, 36)
         card_layout.setSpacing(22)
 
-        delay_row, self.delay_input = make_field_row("Задержка (сек)", "5")
-        count_row, self.count_input = make_field_row("Количество", "700")
-        gap_row, self.gap_input = make_field_row("Задержка между кликами", "10")
+        delay_row, self.delay_input = make_field_row("Задержка (сек)", str(default_delay))
+        count_row, self.count_input = make_field_row("Количество", str(default_count))
+        gap_row, self.gap_input = make_field_row("Задержка между кликами", str(default_gap))
 
         card_layout.addWidget(delay_row)
         card_layout.addWidget(count_row)
         card_layout.addWidget(gap_row)
-
         card_layout.addStretch(1)
 
         button_row = QHBoxLayout()
@@ -382,8 +457,12 @@ class AutoclickTab(QWidget):
         self.start_btn = QPushButton("START")
         self.start_btn.setObjectName("StartButton")
         self.start_btn.setProperty("counting", False)
+        self.start_btn.clicked.connect(self._on_start)
+
         self.cancel_btn = QPushButton("CANCEL")
         self.cancel_btn.setObjectName("DangerButton")
+        self.cancel_btn.clicked.connect(self._on_cancel)
+        self.cancel_btn.setEnabled(False)
 
         button_row.addWidget(self.start_btn)
         button_row.addWidget(self.cancel_btn)
@@ -391,47 +470,81 @@ class AutoclickTab(QWidget):
         card_layout.addLayout(button_row)
         outer.addWidget(card)
 
+        self.worker: ClickerWorker | None = None
 
-# ---------------------------------------------------------------------------
-# Tab 2 - OpenChannels
-# ---------------------------------------------------------------------------
+    # ------------------------------------------------------------------ start/stop
+    def _on_start(self) -> None:
+        if self.worker is not None:
+            return
+        try:
+            delay = int(self.delay_input.text() or "0")
+            count = int(self.count_input.text() or "0")
+            gap = int(self.gap_input.text() or "0")
+        except ValueError:
+            return
+        if count <= 0:
+            return
+
+        self._set_counting_style(True)
+        self.cancel_btn.setEnabled(True)
+        self.start_btn.setEnabled(False)
+
+        self.worker = ClickerWorker(delay, count, gap)
+        self.worker.countdown.connect(self._on_countdown)
+        self.worker.progress.connect(self._on_progress)
+        self.worker.finished_ok.connect(self._on_finished)
+        self.worker.failed.connect(self._on_failed)
+        self.worker.finished.connect(self._on_thread_done)
+        self.worker.start()
+
+    def _on_cancel(self) -> None:
+        if self.worker is not None:
+            self.worker.stop()
+
+    # ------------------------------------------------------------------ signals
+    def _on_countdown(self, seconds_left: int) -> None:
+        self.start_btn.setText(str(seconds_left))
+
+    def _on_progress(self, done: int, total: int) -> None:
+        self.start_btn.setText(f"{done} / {total}")
+
+    def _on_finished(self) -> None:
+        self.start_btn.setText("DONE")
+
+    def _on_failed(self, message: str) -> None:
+        self.start_btn.setText("ERROR")
+        # remember the message for diagnostics
+        self.start_btn.setToolTip(message)
+
+    def _on_thread_done(self) -> None:
+        # thread cleanup (also fires on stop / failure)
+        self.worker = None
+        self.cancel_btn.setEnabled(False)
+        self.start_btn.setEnabled(True)
+        # restore look after a brief delay so the user sees the final state
+        QTimer.singleShot(1200, self._restore_idle)
+
+    def _restore_idle(self) -> None:
+        if self.worker is not None:
+            return
+        self._set_counting_style(False)
+        self.start_btn.setText("START")
+        self.start_btn.setToolTip("")
+
+    def _set_counting_style(self, on: bool) -> None:
+        self.start_btn.setProperty("counting", on)
+        self.start_btn.style().unpolish(self.start_btn)
+        self.start_btn.style().polish(self.start_btn)
 
 
-class OpenChannelsTab(QWidget):
+class AutoclickTab(ClickerTab):
     def __init__(self) -> None:
-        super().__init__()
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(36, 32, 36, 32)
-        outer.setSpacing(0)
+        super().__init__(default_delay=5, default_count=700, default_gap=10)
 
-        card = QFrame()
-        card.setObjectName("Card")
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(48, 44, 48, 36)
-        card_layout.setSpacing(22)
 
-        delay_row, self.delay_input = make_field_row("Задержка (сек)", "7")
-        count_row, self.count_input = make_field_row("Количество", "100")
-        gap_row, self.gap_input = make_field_row("Задержка между кликами", "50")
-
-        card_layout.addWidget(delay_row)
-        card_layout.addWidget(count_row)
-        card_layout.addWidget(gap_row)
-        card_layout.addStretch(1)
-
-        button_row = QHBoxLayout()
-        button_row.setSpacing(12)
-        button_row.addStretch(1)
-        self.start_btn = QPushButton("START")
-        self.start_btn.setObjectName("StartButton")
-        self.start_btn.setProperty("counting", False)
-        self.cancel_btn = QPushButton("CANCEL")
-        self.cancel_btn.setObjectName("DangerButton")
-        button_row.addWidget(self.start_btn)
-        button_row.addWidget(self.cancel_btn)
-
-        card_layout.addLayout(button_row)
-        outer.addWidget(card)
+class OpenChannelsTab(ClickerTab):
+    def __init__(self) -> None:
+        super().__init__(default_delay=7, default_count=100, default_gap=50)
 
 
 # ---------------------------------------------------------------------------
@@ -505,14 +618,24 @@ class ProgressTab(QWidget):
         self.apartment_bar.set_value(0)
         self.total_bar.set_value(0)
 
+        # Map keys to bars and radio buttons
+        self.bars = {
+            "credit": self.credit_bar,
+            "computer": self.computer_bar,
+            "apartment": self.apartment_bar,
+        }
+        self.pickers: dict[str, QPushButton] = {}
+        self.history: list[tuple[str, int]] = []
+        self.selected = "credit"
+
         # Section label for which target the input is going to
         target_select = QLabel("Прогресс")
         target_select.setObjectName("SmallLabel")
         left.addWidget(target_select)
 
-        left.addWidget(self._wrap_with_picker("Кредит", self.credit_bar))
-        left.addWidget(self._wrap_with_picker("Компьютер", self.computer_bar))
-        left.addWidget(self._wrap_with_picker("Квартира", self.apartment_bar))
+        left.addWidget(self._wrap_with_picker("credit", self.credit_bar))
+        left.addWidget(self._wrap_with_picker("computer", self.computer_bar))
+        left.addWidget(self._wrap_with_picker("apartment", self.apartment_bar))
 
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
@@ -533,7 +656,9 @@ class ProgressTab(QWidget):
         right.addWidget(self._build_input_block("Добавить", "", numeric=True,
                                                 button_text="Добавить",
                                                 attr_name="add_input"))
-        right.addWidget(self._build_input_block("Осталось", "1 800 000", numeric=False,
+        right.addWidget(self._build_input_block("Осталось",
+                                                _fmt_thousands(self.TARGET_TOTAL),
+                                                numeric=False,
                                                 button_text=None,
                                                 attr_name="remaining_input",
                                                 readonly=True))
@@ -545,6 +670,8 @@ class ProgressTab(QWidget):
         cancel_row.addStretch(1)
         self.undo_btn = QPushButton("Отменить")
         self.undo_btn.setObjectName("GhostButton")
+        self.undo_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.undo_btn.clicked.connect(self._on_undo)
         cancel_row.addWidget(self.undo_btn)
         right.addLayout(cancel_row)
 
@@ -553,10 +680,15 @@ class ProgressTab(QWidget):
 
         outer.addWidget(card)
 
+        # Wire the "Добавить" button (created inside _build_input_block as `self.add_button`)
+        self.add_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.add_button.clicked.connect(self._on_add)
+        self.add_input.returnPressed.connect(self._on_add)
+
     # ------------------------------------------------------------------
     # builders
     # ------------------------------------------------------------------
-    def _wrap_with_picker(self, name: str, bar_widget: ProgressBarRow) -> QWidget:
+    def _wrap_with_picker(self, key: str, bar_widget: ProgressBarRow) -> QWidget:
         wrap = QFrame()
         wrap.setObjectName("ProgressRow")
         layout = QHBoxLayout(wrap)
@@ -566,11 +698,54 @@ class ProgressTab(QWidget):
         radio = QPushButton("●")
         radio.setObjectName("PickerDot")
         radio.setCheckable(True)
-        if name == "Кредит":
+        radio.setCursor(Qt.CursorShape.PointingHandCursor)
+        if key == "credit":
             radio.setChecked(True)
+        radio.clicked.connect(lambda _checked, k=key: self._select_target(k))
+        self.pickers[key] = radio
+
         layout.addWidget(radio, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(bar_widget, 1)
         return wrap
+
+    def _select_target(self, key: str) -> None:
+        self.selected = key
+        for k, btn in self.pickers.items():
+            btn.setChecked(k == key)
+
+    # ------------------------------------------------------------------
+    # add / undo
+    # ------------------------------------------------------------------
+    def _on_add(self) -> None:
+        raw = (self.add_input.text() or "").strip().replace(" ", "")
+        if not raw or not raw.isdigit():
+            return
+        amount = int(raw)
+        if amount <= 0:
+            return
+        bar = self.bars[self.selected]
+        room = bar.target - bar.value
+        if room <= 0:
+            return
+        amount = min(amount, room)
+        bar.set_value(bar.value + amount)
+        self.history.append((self.selected, amount))
+        self._refresh_total()
+        self.add_input.clear()
+
+    def _on_undo(self) -> None:
+        if not self.history:
+            return
+        key, amount = self.history.pop()
+        bar = self.bars[key]
+        bar.set_value(bar.value - amount)
+        self._refresh_total()
+
+    def _refresh_total(self) -> None:
+        total = self.credit_bar.value + self.computer_bar.value + self.apartment_bar.value
+        self.total_bar.set_value(total)
+        remaining = self.TARGET_TOTAL - total
+        self.remaining_input.setText(_fmt_thousands(remaining))
 
     def _build_input_block(self, label_text: str, value: str, numeric: bool,
                            button_text: str | None, attr_name: str,
