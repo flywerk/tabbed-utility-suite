@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import sys
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont, QIcon, QIntValidator
+from PyQt6.QtCore import QPoint, QRect, Qt
+from PyQt6.QtGui import QFont, QIcon, QIntValidator, QMouseEvent
 from PyQt6.QtWidgets import (
     QApplication,
     QFrame,
@@ -50,7 +50,7 @@ QSS = f"""
 QMainWindow, QWidget {{
     background-color: {BG_PRIMARY};
     color: {TEXT_PRIMARY};
-    font-family: 'Inter', 'Segoe UI', 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif;
+    font-family: 'Helvetica', 'Helvetica Neue', 'Arial', 'Liberation Sans', 'DejaVu Sans', sans-serif;
     font-size: 13px;
 }}
 
@@ -108,8 +108,8 @@ QLabel#SmallLabel {{
     color: {TEXT_MUTED};
     font-size: 11px;
     font-weight: 600;
-    letter-spacing: 1.2px;
-    padding-bottom: 2px;
+    letter-spacing: 1.4px;
+    padding: 4px 0 8px 14px;
 }}
 QLabel#TotalAmount {{
     color: {TEXT_PRIMARY};
@@ -123,8 +123,8 @@ QLineEdit {{
     background-color: {BG_SUNKEN};
     color: {TEXT_PRIMARY};
     border: 1px solid {BORDER};
-    border-radius: 10px;
-    padding: 10px 14px;
+    border-radius: 16px;
+    padding: 12px 16px;
     font-size: 14px;
     selection-background-color: {SECONDARY};
 }}
@@ -136,7 +136,8 @@ QLineEdit#NumericInput {{
     font-weight: 600;
     qproperty-alignment: AlignCenter;
     min-width: 130px;
-    padding: 11px 14px;
+    padding: 13px 16px;
+    border-radius: 18px;
 }}
 QLineEdit#TotalInput {{
     font-size: 16px;
@@ -144,6 +145,7 @@ QLineEdit#TotalInput {{
     qproperty-alignment: AlignCenter;
     color: {TEXT_PRIMARY};
     background-color: #0a1018;
+    border-radius: 18px;
 }}
 
 /* Buttons */
@@ -245,6 +247,41 @@ QProgressBar#TotalProgress::chunk {{
         stop:0 {SECONDARY}, stop:1 {EMERALD});
 }}
 
+/* Window control buttons */
+QPushButton#WindowMin, QPushButton#WindowClose {{
+    background-color: transparent;
+    color: {TEXT_MUTED};
+    border: none;
+    border-radius: 8px;
+    min-width: 38px;
+    max-width: 38px;
+    min-height: 30px;
+    max-height: 30px;
+    padding: 0;
+    font-size: 18px;
+    font-weight: 400;
+    letter-spacing: 0;
+}}
+QPushButton#WindowMin:hover {{
+    background-color: #1a2433;
+    color: {TEXT_PRIMARY};
+}}
+QPushButton#WindowClose:hover {{
+    background-color: {DANGER};
+    color: white;
+}}
+
+/* Title bar widget */
+QWidget#TitleBar {{
+    background-color: {BG_PRIMARY};
+}}
+QLabel#WindowTitle {{
+    color: {TEXT_MUTED};
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.6px;
+}}
+
 /* Radio button (the round selector on the left of each progress bar) */
 QPushButton#PickerDot {{
     background-color: transparent;
@@ -282,7 +319,7 @@ def make_field_row(label_text: str, default_value: str, hint: str | None = None,
     row = QWidget()
     row.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
     h = QHBoxLayout(row)
-    h.setContentsMargins(4, 6, 4, 6)
+    h.setContentsMargins(36, 6, 4, 6)
     h.setSpacing(20)
 
     label_box = QVBoxLayout()
@@ -595,37 +632,213 @@ class ProgressTab(QWidget):
 
 
 # ---------------------------------------------------------------------------
-# Main window
+# Custom title bar (frameless window)
+# ---------------------------------------------------------------------------
+
+
+class TitleBar(QWidget):
+    def __init__(self, parent_window: "MainWindow", title: str = "") -> None:
+        super().__init__(parent_window)
+        self.setObjectName("TitleBar")
+        self.parent_window = parent_window
+        self._drag_offset: QPoint | None = None
+        self.setFixedHeight(44)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(20, 6, 10, 6)
+        layout.setSpacing(2)
+
+        title_label = QLabel(title)
+        title_label.setObjectName("WindowTitle")
+        layout.addWidget(title_label)
+        layout.addStretch(1)
+
+        self.min_btn = QPushButton("\u2013")  # en dash – minimal "minus" glyph
+        self.min_btn.setObjectName("WindowMin")
+        self.min_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.min_btn.clicked.connect(parent_window.showMinimized)
+
+        self.close_btn = QPushButton("\u00d7")  # × multiplication sign
+        self.close_btn.setObjectName("WindowClose")
+        self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.close_btn.clicked.connect(parent_window.close)
+
+        layout.addWidget(self.min_btn)
+        layout.addWidget(self.close_btn)
+
+    # drag the window by the title bar
+    def mousePressEvent(self, ev: QMouseEvent) -> None:
+        if ev.button() == Qt.MouseButton.LeftButton:
+            self._drag_offset = (
+                ev.globalPosition().toPoint()
+                - self.parent_window.frameGeometry().topLeft()
+            )
+            ev.accept()
+
+    def mouseMoveEvent(self, ev: QMouseEvent) -> None:
+        if self._drag_offset is not None and ev.buttons() & Qt.MouseButton.LeftButton:
+            if self.parent_window.isMaximized():
+                # restore on drag-from-maximized so the window follows the cursor
+                self.parent_window.showNormal()
+            self.parent_window.move(ev.globalPosition().toPoint() - self._drag_offset)
+            ev.accept()
+
+    def mouseReleaseEvent(self, ev: QMouseEvent) -> None:
+        self._drag_offset = None
+
+    def mouseDoubleClickEvent(self, ev: QMouseEvent) -> None:
+        if self.parent_window.isMaximized():
+            self.parent_window.showNormal()
+        else:
+            self.parent_window.showMaximized()
+
+
+# ---------------------------------------------------------------------------
+# Main window — frameless + edge-resizable
 # ---------------------------------------------------------------------------
 
 
 class MainWindow(QMainWindow):
+    RESIZE_MARGIN = 6
+
     def __init__(self) -> None:
         super().__init__()
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        self.setMouseTracking(True)
         self.setWindowTitle("Tri-Tab Utility")
         self.setMinimumSize(960, 620)
         self.resize(1080, 720)
 
+        # resize state
+        self._resize_dir: str | None = None
+        self._resize_start_pos: QPoint | None = None
+        self._resize_start_geom: QRect | None = None
+
         central = QWidget()
+        central.setMouseTracking(True)
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(10)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Title bar
+        self.title_bar = TitleBar(self, "TRI-TAB UTILITY")
+        layout.addWidget(self.title_bar)
+
+        # Body container
+        body = QWidget()
+        body.setMouseTracking(True)
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(20, 4, 20, 20)
+        body_layout.setSpacing(10)
 
         tabs = QTabWidget()
         tabs.setDocumentMode(True)
         tabs.addTab(AutoclickTab(), "PagesAutoclick")
         tabs.addTab(OpenChannelsTab(), "OpenChannels")
         tabs.addTab(ProgressTab(), "Progress")
-        layout.addWidget(tabs)
+        body_layout.addWidget(tabs)
+        layout.addWidget(body)
+
+    # ---------------- frameless edge resize ----------------
+    def _hit_test(self, pos: QPoint) -> str | None:
+        m = self.RESIZE_MARGIN
+        rect = self.rect()
+        x, y = pos.x(), pos.y()
+        on_left = x <= m
+        on_right = x >= rect.width() - m
+        on_top = y <= m
+        on_bottom = y >= rect.height() - m
+        if on_top and on_left:
+            return "tl"
+        if on_top and on_right:
+            return "tr"
+        if on_bottom and on_left:
+            return "bl"
+        if on_bottom and on_right:
+            return "br"
+        if on_left:
+            return "l"
+        if on_right:
+            return "r"
+        if on_top:
+            return "t"
+        if on_bottom:
+            return "b"
+        return None
+
+    def mouseMoveEvent(self, ev: QMouseEvent) -> None:
+        if self._resize_dir and ev.buttons() & Qt.MouseButton.LeftButton:
+            self._do_resize(ev.globalPosition().toPoint())
+            return
+        h = self._hit_test(ev.position().toPoint())
+        cursors = {
+            "l": Qt.CursorShape.SizeHorCursor,
+            "r": Qt.CursorShape.SizeHorCursor,
+            "t": Qt.CursorShape.SizeVerCursor,
+            "b": Qt.CursorShape.SizeVerCursor,
+            "tl": Qt.CursorShape.SizeFDiagCursor,
+            "br": Qt.CursorShape.SizeFDiagCursor,
+            "tr": Qt.CursorShape.SizeBDiagCursor,
+            "bl": Qt.CursorShape.SizeBDiagCursor,
+        }
+        if h:
+            self.setCursor(cursors[h])
+        else:
+            self.unsetCursor()
+        super().mouseMoveEvent(ev)
+
+    def mousePressEvent(self, ev: QMouseEvent) -> None:
+        if ev.button() == Qt.MouseButton.LeftButton:
+            h = self._hit_test(ev.position().toPoint())
+            if h:
+                self._resize_dir = h
+                self._resize_start_pos = ev.globalPosition().toPoint()
+                self._resize_start_geom = QRect(self.geometry())
+                ev.accept()
+                return
+        super().mousePressEvent(ev)
+
+    def mouseReleaseEvent(self, ev: QMouseEvent) -> None:
+        self._resize_dir = None
+        super().mouseReleaseEvent(ev)
+
+    def _do_resize(self, gpos: QPoint) -> None:
+        if not self._resize_dir or self._resize_start_geom is None:
+            return
+        delta = gpos - self._resize_start_pos
+        g = QRect(self._resize_start_geom)
+        d = self._resize_dir
+        min_w = self.minimumWidth()
+        min_h = self.minimumHeight()
+        if "l" in d:
+            new_left = g.left() + delta.x()
+            if g.right() - new_left + 1 < min_w:
+                new_left = g.right() - min_w + 1
+            g.setLeft(new_left)
+        if "r" in d:
+            new_right = g.right() + delta.x()
+            if new_right - g.left() + 1 < min_w:
+                new_right = g.left() + min_w - 1
+            g.setRight(new_right)
+        if "t" in d:
+            new_top = g.top() + delta.y()
+            if g.bottom() - new_top + 1 < min_h:
+                new_top = g.bottom() - min_h + 1
+            g.setTop(new_top)
+        if "b" in d:
+            new_bottom = g.bottom() + delta.y()
+            if new_bottom - g.top() + 1 < min_h:
+                new_bottom = g.top() + min_h - 1
+            g.setBottom(new_bottom)
+        self.setGeometry(g)
 
 
 def main() -> int:
     app = QApplication(sys.argv)
     app.setStyleSheet(QSS)
-    # nicer default font weight on linux render
-    f = QFont("Segoe UI", 10)
-    app.setFont(f)
+    app.setFont(QFont("Helvetica", 10))
     win = MainWindow()
     win.show()
     return app.exec()
