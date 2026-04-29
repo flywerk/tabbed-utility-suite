@@ -1,0 +1,26 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "BEJtjDoYvgoTVmiy2I8UO"
+uri = "file://mockups/tab1_autoclick.png"
+type = "image"
+title = "Таб 1 — PagesAutoclick"
+
+[[outputs]]
+id = "cG5rw43mdbRIPkSIFme-e"
+uri = "file://mockups/tab2_channels.png"
+type = "image"
+title = "Таб 2 — OpenChannels"
+
+[[outputs]]
+id = "HkBtWOcdDLyJR8kTg7x0k"
+uri = "file://mockups/tab3_progress.png"
+type = "image"
+title = "Таб 3 — Progress"
+
+[[outputs]]
+id = "Y1-B1Y3e-K5PEeCPl5r_I"
+uri = "file://mockups/tab1_counting.png"
+type = "image"
+title = "Состояние отсчёта (зелёный таймер на месте START)"
