@@ -50,32 +50,35 @@ QSS = f"""
 QMainWindow, QWidget {{
     background-color: {BG_PRIMARY};
     color: {TEXT_PRIMARY};
-    font-family: 'Segoe UI', 'Inter', 'Helvetica Neue', Arial, sans-serif;
-    font-size: 14px;
+    font-family: 'Inter', 'Segoe UI', 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif;
+    font-size: 13px;
 }}
 
 /* Tabs */
 QTabWidget::pane {{
     border: 1px solid {BORDER};
-    border-radius: 12px;
+    border-radius: 14px;
     background-color: {BG_ELEVATED};
     top: -1px;
 }}
 QTabBar {{
     qproperty-drawBase: 0;
     background: transparent;
+    margin-left: 4px;
 }}
 QTabBar::tab {{
     background-color: {BG_SUNKEN};
     color: {TEXT_MUTED};
-    padding: 10px 26px;
-    margin-right: 4px;
+    padding: 12px 30px;
+    margin-right: 6px;
     border: 1px solid {BORDER};
     border-bottom: none;
-    border-top-left-radius: 10px;
-    border-top-right-radius: 10px;
+    border-top-left-radius: 12px;
+    border-top-right-radius: 12px;
     font-weight: 500;
-    min-width: 140px;
+    font-size: 13px;
+    letter-spacing: 0.3px;
+    min-width: 150px;
 }}
 QTabBar::tab:hover {{
     color: {TEXT_PRIMARY};
@@ -91,24 +94,28 @@ QTabBar::tab:selected {{
 /* Labels */
 QLabel#FieldLabel {{
     color: {TEXT_PRIMARY};
-    font-size: 18px;
+    font-size: 15px;
     font-weight: 500;
+    letter-spacing: 0.1px;
 }}
 QLabel#FieldHint {{
     color: {TEXT_MUTED};
-    font-size: 12px;
+    font-size: 11px;
+    font-weight: 400;
+    margin-top: 2px;
 }}
 QLabel#SmallLabel {{
     color: {TEXT_MUTED};
-    font-size: 12px;
-    font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1.2px;
+    padding-bottom: 2px;
 }}
 QLabel#TotalAmount {{
     color: {TEXT_PRIMARY};
     font-size: 22px;
     font-weight: 600;
+    letter-spacing: 0.5px;
 }}
 
 /* Inputs */
@@ -118,23 +125,25 @@ QLineEdit {{
     border: 1px solid {BORDER};
     border-radius: 10px;
     padding: 10px 14px;
-    font-size: 16px;
+    font-size: 14px;
     selection-background-color: {SECONDARY};
 }}
 QLineEdit:focus {{
     border-color: {SECONDARY};
 }}
 QLineEdit#NumericInput {{
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 600;
     qproperty-alignment: AlignCenter;
-    min-width: 140px;
+    min-width: 130px;
+    padding: 11px 14px;
 }}
 QLineEdit#TotalInput {{
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 600;
     qproperty-alignment: AlignCenter;
-    color: {TEXT_MUTED};
+    color: {TEXT_PRIMARY};
+    background-color: #0a1018;
 }}
 
 /* Buttons */
@@ -143,11 +152,10 @@ QPushButton {{
     color: white;
     border: none;
     border-radius: 10px;
-    padding: 11px 28px;
-    font-size: 14px;
+    padding: 11px 26px;
+    font-size: 12px;
     font-weight: 600;
-    letter-spacing: 0.4px;
-    text-transform: uppercase;
+    letter-spacing: 1.2px;
 }}
 QPushButton:hover {{
     background-color: {SECONDARY_HOVER};
@@ -163,6 +171,8 @@ QPushButton#GhostButton {{
     background-color: transparent;
     color: {TEXT_PRIMARY};
     border: 1px solid {BORDER};
+    font-weight: 500;
+    letter-spacing: 0.5px;
 }}
 QPushButton#GhostButton:hover {{
     border-color: {SECONDARY};
@@ -179,25 +189,30 @@ QPushButton#DangerButton:hover {{
     background-color: {DANGER};
 }}
 QPushButton#StartButton {{
-    min-width: 170px;
+    min-width: 180px;
+    padding: 13px 28px;
+    font-size: 13px;
 }}
 QPushButton#StartButton[counting="true"] {{
     background-color: transparent;
     color: {EMERALD};
     border: 2px solid {EMERALD};
-    font-size: 22px;
+    font-size: 24px;
     font-weight: 700;
+    letter-spacing: 0;
+    padding: 9px 28px;
 }}
 QPushButton#AddButton {{
     background-color: {SECONDARY};
-    min-width: 100px;
+    min-width: 110px;
+    padding: 11px 18px;
 }}
 
 /* Cards */
 QFrame#Card {{
     background-color: {BG_ELEVATED};
     border: 1px solid {BORDER};
-    border-radius: 14px;
+    border-radius: 16px;
 }}
 QFrame#ProgressRow {{
     background-color: transparent;
@@ -208,23 +223,50 @@ QProgressBar {{
     background-color: {BG_SUNKEN};
     border: 1px solid {BORDER};
     border-radius: 10px;
-    height: 44px;
+    min-height: 42px;
+    max-height: 42px;
     text-align: center;
     color: {TEXT_PRIMARY};
     font-weight: 600;
-    font-size: 14px;
+    font-size: 13px;
 }}
 QProgressBar::chunk {{
     background-color: {EMERALD};
     border-radius: 9px;
+    margin: 1px;
 }}
 QProgressBar#TotalProgress {{
-    height: 52px;
-    font-size: 15px;
+    min-height: 52px;
+    max-height: 52px;
+    font-size: 14px;
 }}
 QProgressBar#TotalProgress::chunk {{
     background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
         stop:0 {SECONDARY}, stop:1 {EMERALD});
+}}
+
+/* Radio button (the round selector on the left of each progress bar) */
+QPushButton#PickerDot {{
+    background-color: transparent;
+    color: {TEXT_MUTED};
+    border: 1px solid {BORDER};
+    border-radius: 14px;
+    min-width: 28px;
+    max-width: 28px;
+    min-height: 28px;
+    max-height: 28px;
+    padding: 0;
+    font-size: 18px;
+    font-weight: 700;
+}}
+QPushButton#PickerDot:hover {{
+    border-color: {SECONDARY};
+    color: {SECONDARY};
+}}
+QPushButton#PickerDot:checked {{
+    border-color: {SECONDARY};
+    color: {SECONDARY};
+    background-color: rgba(18, 130, 119, 0.12);
 }}
 """
 
@@ -240,11 +282,12 @@ def make_field_row(label_text: str, default_value: str, hint: str | None = None,
     row = QWidget()
     row.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
     h = QHBoxLayout(row)
-    h.setContentsMargins(0, 0, 0, 0)
+    h.setContentsMargins(4, 6, 4, 6)
     h.setSpacing(20)
 
     label_box = QVBoxLayout()
-    label_box.setSpacing(2)
+    label_box.setSpacing(0)
+    label_box.setContentsMargins(0, 0, 0, 0)
 
     label = QLabel(label_text)
     label.setObjectName("FieldLabel")
@@ -259,7 +302,7 @@ def make_field_row(label_text: str, default_value: str, hint: str | None = None,
 
     edit = QLineEdit(default_value)
     edit.setObjectName("NumericInput")
-    edit.setFixedWidth(160)
+    edit.setFixedWidth(170)
     if numeric:
         edit.setValidator(QIntValidator(0, 10_000_000))
     h.addWidget(edit, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -281,12 +324,8 @@ class AutoclickTab(QWidget):
         card = QFrame()
         card.setObjectName("Card")
         card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(40, 36, 40, 32)
-        card_layout.setSpacing(28)
-
-        intro = QLabel("Автокликер для активной страницы")
-        intro.setObjectName("SmallLabel")
-        card_layout.addWidget(intro)
+        card_layout.setContentsMargins(48, 44, 48, 36)
+        card_layout.setSpacing(22)
 
         delay_row, self.delay_input = make_field_row("Задержка (сек)", "5")
         count_row, self.count_input = make_field_row("Количество", "700")
@@ -332,13 +371,8 @@ class OpenChannelsTab(QWidget):
         card = QFrame()
         card.setObjectName("Card")
         card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(40, 36, 40, 32)
-        card_layout.setSpacing(28)
-
-        intro = QLabel("Поочерёдное открытие каналов max.ru на закреплённой вкладке Chrome")
-        intro.setObjectName("SmallLabel")
-        intro.setWordWrap(True)
-        card_layout.addWidget(intro)
+        card_layout.setContentsMargins(48, 44, 48, 36)
+        card_layout.setSpacing(22)
 
         delay_row, self.delay_input = make_field_row("Задержка (сек)", "7")
         count_row, self.count_input = make_field_row("Количество", "100")
@@ -419,23 +453,23 @@ class ProgressTab(QWidget):
         card = QFrame()
         card.setObjectName("Card")
         grid = QHBoxLayout(card)
-        grid.setContentsMargins(36, 32, 36, 32)
-        grid.setSpacing(36)
+        grid.setContentsMargins(44, 36, 44, 36)
+        grid.setSpacing(40)
 
         # Left column: progress bars
         left = QVBoxLayout()
-        left.setSpacing(18)
+        left.setSpacing(14)
 
         self.credit_bar = ProgressBarRow("Кредит", self.TARGET_CREDIT)
         self.computer_bar = ProgressBarRow("Компьютер", self.TARGET_COMPUTER)
         self.apartment_bar = ProgressBarRow("Квартира", self.TARGET_APARTMENT)
         self.total_bar = ProgressBarRow("Общий", self.TARGET_TOTAL)
         self.total_bar.bar.setObjectName("TotalProgress")
-        # Mock visible progress for the screenshot
-        self.credit_bar.set_value(1900)
+        # All bars start at 0
+        self.credit_bar.set_value(0)
         self.computer_bar.set_value(0)
         self.apartment_bar.set_value(0)
-        self.total_bar.set_value(1900)
+        self.total_bar.set_value(0)
 
         # Section label for which target the input is going to
         target_select = QLabel("Прогресс")
@@ -462,10 +496,10 @@ class ProgressTab(QWidget):
         right = QVBoxLayout()
         right.setSpacing(20)
 
-        right.addWidget(self._build_input_block("Добавить", "1400", numeric=True,
+        right.addWidget(self._build_input_block("Добавить", "", numeric=True,
                                                 button_text="Добавить",
                                                 attr_name="add_input"))
-        right.addWidget(self._build_input_block("Осталось", "174 200", numeric=False,
+        right.addWidget(self._build_input_block("Осталось", "1 800 000", numeric=False,
                                                 button_text=None,
                                                 attr_name="remaining_input",
                                                 readonly=True))
@@ -497,13 +531,11 @@ class ProgressTab(QWidget):
         layout.setSpacing(12)
 
         radio = QPushButton("●")
-        radio.setObjectName("GhostButton")
-        radio.setFixedWidth(46)
+        radio.setObjectName("PickerDot")
         radio.setCheckable(True)
         if name == "Кредит":
             radio.setChecked(True)
-            radio.setStyleSheet(f"color: {SECONDARY}; border-color: {SECONDARY};")
-        layout.addWidget(radio)
+        layout.addWidget(radio, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(bar_widget, 1)
         return wrap
 
@@ -512,19 +544,21 @@ class ProgressTab(QWidget):
                            readonly: bool = False) -> QWidget:
         block = QFrame()
         block.setObjectName("Card")
+        block.setStyleSheet(f"QFrame#Card {{ background-color: #16202d; }}")
         v = QVBoxLayout(block)
-        v.setContentsMargins(20, 16, 20, 18)
-        v.setSpacing(8)
+        v.setContentsMargins(22, 16, 22, 18)
+        v.setSpacing(10)
 
         small = QLabel(label_text)
         small.setObjectName("SmallLabel")
         v.addWidget(small)
 
         row = QHBoxLayout()
-        row.setSpacing(10)
+        row.setSpacing(12)
 
         edit = QLineEdit(value)
         edit.setObjectName("NumericInput")
+        edit.setPlaceholderText("0" if numeric and not readonly else "")
         if numeric:
             edit.setValidator(QIntValidator(0, 10_000_000))
         if readonly:
@@ -545,11 +579,13 @@ class ProgressTab(QWidget):
     def _build_total_block(self) -> QWidget:
         block = QFrame()
         block.setObjectName("Card")
+        block.setStyleSheet(f"QFrame#Card {{ background-color: #16202d; }}")
         v = QVBoxLayout(block)
-        v.setContentsMargins(20, 16, 20, 18)
-        v.setSpacing(6)
+        v.setContentsMargins(22, 16, 22, 20)
+        v.setSpacing(8)
         small = QLabel("Цель")
         small.setObjectName("SmallLabel")
+        small.setAlignment(Qt.AlignmentFlag.AlignCenter)
         v.addWidget(small)
         amount = QLabel("1 800 000")
         amount.setObjectName("TotalAmount")
