@@ -77,6 +77,8 @@ git push -u origin main
 
 Создать файл `.github/workflows/build.yml`:
 
+Если файлы лежат в подпапке `desktop-app/` (как в этом проекте):
+
 ```yaml
 name: Build Windows EXE
 on:
@@ -87,6 +89,9 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop-app
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -99,10 +104,12 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: FlywerkAutomation-windows
-          path: dist/FlywerkAutomation.exe
+          path: desktop-app/dist/FlywerkAutomation.exe
 ```
 
-После пуша тега `v1.0.0` GitHub сам соберёт exe и положит его в артефакты прогона.
+Если же `main.py`, `build.spec` и `requirements.txt` лежат в корне репозитория — убери блок `defaults: run: working-directory` и измени `path` на `dist/FlywerkAutomation.exe`.
+
+После пуша тега `v1.0.0` GitHub сам соберёт exe. Готовый файл появится в разделе **Actions → нужный прогон → Artifacts → FlywerkAutomation-windows**.
 
 ---
 
